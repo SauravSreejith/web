@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import cytoscape from 'cytoscape';
-import { networkNodes, networkEdges } from '../data/mockData';
 
 const NetworkGraph = ({ 
   tissue = 'normal', 
@@ -8,35 +7,60 @@ const NetworkGraph = ({
   onNodeClick, 
   highlightedGene,
   width = '100%',
-  height = '100%'
+  height = '100%',
+  networkData = null,
+  mode = 'full' // 'full' for initial network, 'ego' for hub rewiring, 'path' for path tracer
 }) => {
   const cyRef = useRef(null);
   const containerRef = useRef(null);
   const [isReady, setIsReady] = useState(false);
 
+  // Get status-based colors for hub rewiring mode
+  const getStatusColor = (status) => {
+    if (status === 'lost') return '#00F0FF'; // Blue for normal-only
+    if (status === 'gained') return '#FF2D8D'; // Red for tumor-only
+    if (status === 'maintained') return '#9B59D6'; // Purple for both
+    return tissue === 'normal' ? '#00F0FF' : '#FF2D8D';
+  };
+
   // Initialize Cytoscape
   useEffect(() => {
-    if (!containerRef.current || cyRef.current) return;
+    if (!containerRef.current || cyRef.current || !networkData) return;
 
     const nodeColor = tissue === 'normal' ? '#00F0FF' : '#FF2D8D';
     const edgeColor = tissue === 'normal' ? 'rgba(0, 240, 255, 0.25)' : 'rgba(255, 45, 141, 0.25)';
 
-    // Prepare elements
+    // Prepare elements from API data
     const elements = [
-      ...networkNodes.map(node => ({
-        data: { 
-          id: node.id, 
-          label: node.label,
-          group: node.group,
-          size: node.size
+      ...networkData.nodes.map(node => {
+        // Calculate size based on rank if available, otherwise use default
+        let nodeSize = 16;
+        if (node.rank) {
+          // Formula: radius = 20 - (rank / 5)
+          // Rank 1 = 20, Rank 50 = 10
+          nodeSize = Math.max(10, 20 - (node.rank / 5));
+        } else if (node.type === 'hub') {
+          nodeSize = 24;
         }
-      })),
-      ...networkEdges.map((edge, idx) => ({
+        
+        return {
+          data: { 
+            id: node.id, 
+            label: node.label || node.id,
+            type: node.type || 'normal',
+            status: node.status,
+            rank: node.rank,
+            size: nodeSize
+          }
+        };
+      }),
+      ...networkData.links.map((edge, idx) => ({
         data: { 
           id: `e${idx}`, 
           source: edge.source, 
           target: edge.target, 
-          weight: edge.weight 
+          weight: edge.weight || 0.5,
+          status: edge.status
         }
       }))
     ];
@@ -48,7 +72,12 @@ const NetworkGraph = ({
         {
           selector: 'node',
           style: {
-            'background-color': nodeColor,
+            'background-color': (ele) => {
+              if (mode === 'ego' && ele.data('status')) {
+                return getStatusColor(ele.data('status'));
+              }
+              return nodeColor;
+            },
             'width': (ele) => ele.data('size') || 16,
             'height': (ele) => ele.data('size') || 16,
             'label': (ele) => ele.data('label'),
@@ -68,12 +97,15 @@ const NetworkGraph = ({
           }
         },
         {
-          selector: 'node[group="top"]',
+          selector: 'node[type="hub"]',
           style: {
-            'width': (ele) => (ele.data('size') || 24) * 1.2,
-            'height': (ele) => (ele.data('size') || 24) * 1.2,
+            'width': 28,
+            'height': 28,
             'font-size': '12px',
-            'font-weight': 'bold'
+            'font-weight': 'bold',
+            'border-width': 2,
+            'border-color': '#FFD166',
+            'border-opacity': 0.8
           }
         },
         {
@@ -110,8 +142,19 @@ const NetworkGraph = ({
         {
           selector: 'edge',
           style: {
-            'width': (ele) => Math.max(1, ele.data('weight') * 2),
-            'line-color': edgeColor,
+            'width': (ele) => {
+              const weight = ele.data('weight') || 0.5;
+              return Math.max(1, weight * 3);
+            },
+            'line-color': (ele) => {
+              if (mode === 'ego' && ele.data('status')) {
+                const status = ele.data('status');
+                if (status === 'lost') return 'rgba(0, 240, 255, 0.5)';
+                if (status === 'gained') return 'rgba(255, 45, 141, 0.5)';
+                if (status === 'maintained') return 'rgba(155, 89, 214, 0.5)';
+              }
+              return edgeColor;
+            },
             'target-arrow-color': edgeColor,
             'target-arrow-shape': 'none',
             'curve-style': 'bezier',
@@ -124,7 +167,7 @@ const NetworkGraph = ({
           selector: 'edge.highlighted',
           style: {
             'line-color': '#FFD166',
-            'width': (ele) => Math.max(2, ele.data('weight') * 3),
+            'width': (ele) => Math.max(2, (ele.data('weight') || 0.5) * 4),
             'opacity': 1
           }
         },
@@ -136,21 +179,23 @@ const NetworkGraph = ({
         }
       ],
       layout: {
-        name: 'cose',
-        padding: 20,
-        nodeRepulsion: 8000,
-        nodeOverlap: 20,
-        idealEdgeLength: 80,
-        edgeElasticity: 100,
+        name: mode === 'path' ? 'breadthfirst' : 'cose',
+        padding: 30,
+        nodeRepulsion: mode === 'ego' ? 8000 : 6000,
+        nodeOverlap: 10,
+        idealEdgeLength: mode === 'ego' ? 100 : 70,
+        edgeElasticity: 200, // Increased for more bouncy movement
         nestingFactor: 5,
-        gravity: 30,
-        numIter: 1000,
+        gravity: mode === 'ego' ? 30 : 20, // Reduced gravity for more free movement
+        numIter: mode === 'ego' ? 600 : 800,
         initialTemp: 200,
         coolingFactor: 0.95,
         minTemp: 1.0,
         fit: true,
         animate: true,
-        animationDuration: 500
+        animationDuration: 500,
+        directed: mode === 'path',
+        spacingFactor: mode === 'path' ? 1.5 : 1
       },
       minZoom: 0.3,
       maxZoom: 3,
@@ -165,10 +210,11 @@ const NetworkGraph = ({
 
     cyRef.current.on('mouseover', 'node', (evt) => {
       const node = evt.target;
+      const currentSize = node.data('size') || 16;
       node.animate({
         style: { 
-          'width': (node.data('size') || 16) * 1.4,
-          'height': (node.data('size') || 16) * 1.4
+          'width': currentSize * 1.4,
+          'height': currentSize * 1.4
         }
       }, { duration: 200 });
     });
@@ -185,28 +231,6 @@ const NetworkGraph = ({
       }
     });
 
-    // Run layout
-    cyRef.current.layout({
-      name: 'cose',
-      padding: 30,
-      nodeRepulsion: 10000,
-      nodeOverlap: 10,
-      idealEdgeLength: 100,
-      edgeElasticity: 150,
-      nestingFactor: 5,
-      gravity: 40,
-      numIter: 1500,
-      initialTemp: 300,
-      coolingFactor: 0.92,
-      minTemp: 0.5,
-      fit: true,
-      animate: true,
-      animationDuration: 800,
-      randomize: false,
-      componentSpacing: 100,
-      uniformNodeDimensions: false
-    }).run();
-
     setIsReady(true);
 
     return () => {
@@ -215,7 +239,7 @@ const NetworkGraph = ({
         cyRef.current = null;
       }
     };
-  }, [tissue]); // Re-initialize when tissue changes
+  }, [tissue, networkData, mode]); // Re-initialize when these change
 
   // Update colors when tissue changes
   useEffect(() => {
@@ -237,7 +261,7 @@ const NetworkGraph = ({
       .update();
   }, [tissue, isReady]);
 
-  // Handle selected gene
+  // Handle selected gene - auto-select when gene is selected
   useEffect(() => {
     if (!cyRef.current || !isReady) return;
 
@@ -254,25 +278,35 @@ const NetworkGraph = ({
         selectedNode.select();
         selectedNode.addClass('highlighted');
 
-        // Get neighbors
-        const neighbors = selectedNode.neighborhood();
-        neighbors.nodes().addClass('neighbor');
-        neighbors.edges().addClass('highlighted');
+        if (mode === 'full') {
+          // Get neighbors for full network mode
+          const neighbors = selectedNode.neighborhood();
+          neighbors.nodes().addClass('neighbor');
+          neighbors.edges().addClass('highlighted');
 
-        // Dim other elements
-        cyRef.current.nodes().not(selectedNode).not(neighbors.nodes()).addClass('dimmed');
-        cyRef.current.edges().not(neighbors.edges()).addClass('dimmed');
+          // Dim other elements
+          cyRef.current.nodes().not(selectedNode).not(neighbors.nodes()).addClass('dimmed');
+          cyRef.current.edges().not(neighbors.edges()).addClass('dimmed');
 
-        // Center on selected node
-        cyRef.current.animate({
-          fit: {
-            eles: selectedNode.union(neighbors),
-            padding: 80
-          }
-        }, { duration: 500 });
+          // Center on selected node with more padding (less zoom)
+          cyRef.current.animate({
+            fit: {
+              eles: selectedNode.union(neighbors),
+              padding: 150 // Increased from 80 for less aggressive zoom
+            }
+          }, { duration: 500 });
+        } else {
+          // For ego network, just center on the selected node with generous padding
+          cyRef.current.animate({
+            fit: {
+              eles: selectedNode,
+              padding: 200 // Increased from 100 for less aggressive zoom
+            }
+          }, { duration: 500 });
+        }
       }
     }
-  }, [selectedGene, isReady]);
+  }, [selectedGene, isReady, mode]);
 
   // Handle highlighted gene from leaderboard
   useEffect(() => {
@@ -280,10 +314,11 @@ const NetworkGraph = ({
 
     const node = cyRef.current.getElementById(highlightedGene);
     if (node.length > 0) {
+      const currentSize = node.data('size') || 16;
       node.animate({
         style: { 
-          'width': (node.data('size') || 16) * 1.6,
-          'height': (node.data('size') || 16) * 1.6
+          'width': currentSize * 1.6,
+          'height': currentSize * 1.6
         }
       }, { duration: 200 });
 
@@ -341,6 +376,20 @@ const NetworkGraph = ({
     cyRef.current.zoom(cyRef.current.zoom() * 0.8);
   }, []);
 
+  if (!networkData) {
+    return (
+      <div className="w-full h-full flex items-center justify-center">
+        <div className="text-center">
+          <svg className="w-12 h-12 mx-auto mb-4 animate-spin text-[#00F0FF]" fill="none" viewBox="0 0 24 24">
+            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+          </svg>
+          <p className="text-sm text-[#A6AEB8]">Loading network...</p>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="relative w-full h-full">
       <div 
@@ -384,21 +433,38 @@ const NetworkGraph = ({
         </button>
       </div>
       
-      {/* Legend */}
+      {/* Legend - different for ego mode */}
       <div className="absolute bottom-4 left-4 glass-card-sm px-4 py-3">
-        <div className="flex items-center gap-4 text-xs">
-          <div className="flex items-center gap-2">
-            <div 
-              className="w-3 h-3 rounded-full"
-              style={{ backgroundColor: tissue === 'normal' ? '#00F0FF' : '#FF2D8D' }}
-            />
-            <span className="text-[#A6AEB8]">Network Gene</span>
+        {mode === 'ego' ? (
+          <div className="flex items-center gap-4 text-xs">
+            <div className="flex items-center gap-2">
+              <div className="w-3 h-3 rounded-full bg-[#00F0FF]" />
+              <span className="text-[#A6AEB8]">Lost</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <div className="w-3 h-3 rounded-full bg-[#FF2D8D]" />
+              <span className="text-[#A6AEB8]">Gained</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <div className="w-3 h-3 rounded-full bg-[#9B59D6]" />
+              <span className="text-[#A6AEB8]">Maintained</span>
+            </div>
           </div>
-          <div className="flex items-center gap-2">
-            <div className="w-4 h-4 rounded-full bg-[#FFD166]" />
-            <span className="text-[#A6AEB8]">Selected</span>
+        ) : (
+          <div className="flex items-center gap-4 text-xs">
+            <div className="flex items-center gap-2">
+              <div 
+                className="w-3 h-3 rounded-full"
+                style={{ backgroundColor: tissue === 'normal' ? '#00F0FF' : '#FF2D8D' }}
+              />
+              <span className="text-[#A6AEB8]">Network Gene</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <div className="w-4 h-4 rounded-full bg-[#FFD166]" />
+              <span className="text-[#A6AEB8]">Selected</span>
+            </div>
           </div>
-        </div>
+        )}
       </div>
     </div>
   );

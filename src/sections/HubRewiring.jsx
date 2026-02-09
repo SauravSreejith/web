@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import NetworkGraph from '../components/NetworkGraph';
 
@@ -6,9 +6,28 @@ const HubRewiring = () => {
   const [geneInput, setGeneInput] = useState('');
   const [selectedGene, setSelectedGene] = useState(null);
   const [tissue, setTissue] = useState('normal');
-  const [neighborData, setNeighborData] = useState(null);
+  const [networkData, setNetworkData] = useState(null);
+  const [initialNetwork, setInitialNetwork] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+
+  // Load initial skeleton network on mount
+  useEffect(() => {
+    fetchInitialNetwork();
+  }, []);
+
+  const fetchInitialNetwork = async () => {
+    try {
+      const response = await fetch('http://localhost:8000/api/network/initial');
+      if (!response.ok) throw new Error('Failed to fetch initial network');
+      const data = await response.json();
+      setInitialNetwork(data);
+      setNetworkData(data);
+    } catch (err) {
+      console.error('Error loading initial network:', err);
+      setError(err.message);
+    }
+  };
 
   const handleAnalyze = async () => {
     if (!geneInput.trim()) return;
@@ -17,37 +36,63 @@ const HubRewiring = () => {
     setError(null);
 
     try {
-      const response = await fetch(`http://localhost:8000/api/neighbors?gene=${geneInput.trim()}`);
+      const response = await fetch(`http://localhost:8000/api/rewiring?gene=${geneInput.trim()}`);
       if (!response.ok) {
-        throw new Error('Failed to fetch neighbor data');
+        throw new Error('Failed to fetch rewiring data');
       }
       const data = await response.json();
-      setNeighborData(data);
+      setNetworkData(data);
       setSelectedGene(geneInput.trim());
     } catch (err) {
       setError(err.message);
-      setNeighborData(null);
+      setNetworkData(initialNetwork); // Fall back to initial network
     } finally {
       setLoading(false);
     }
   };
 
   const handleNodeClick = (geneId) => {
-    setSelectedGene(geneId);
-    setGeneInput(geneId);
+    if (geneId) {
+      setGeneInput(geneId);
+      setSelectedGene(geneId);
+      // Auto-fetch rewiring data for clicked gene
+      fetchRewiringForGene(geneId);
+    }
+  };
+
+  const fetchRewiringForGene = async (gene) => {
+    setLoading(true);
+    setError(null);
+
+    try {
+      const response = await fetch(`http://localhost:8000/api/rewiring?gene=${gene}`);
+      if (!response.ok) throw new Error('Failed to fetch rewiring data');
+      const data = await response.json();
+      setNetworkData(data);
+    } catch (err) {
+      setError(err.message);
+      setNetworkData(initialNetwork);
+    } finally {
+      setLoading(false);
+    }
   };
 
   const calculateStats = () => {
-    if (!neighborData?.links) return { total: 0, gain: 0, loss: 0 };
+    if (!networkData?.links) return { total: 0, gain: 0, loss: 0, maintained: 0 };
 
-    return {
-      total: neighborData.links.length,
-      gain: Math.floor(neighborData.links.length * 0.6),
-      loss: Math.floor(neighborData.links.length * 0.4)
-    };
+    const stats = networkData.links.reduce((acc, link) => {
+      acc.total++;
+      if (link.status === 'gained') acc.gain++;
+      else if (link.status === 'lost') acc.loss++;
+      else if (link.status === 'maintained') acc.maintained++;
+      return acc;
+    }, { total: 0, gain: 0, loss: 0, maintained: 0 });
+
+    return stats;
   };
 
   const stats = calculateStats();
+  const mode = selectedGene && networkData?.nodes?.some(n => n.type === 'hub') ? 'ego' : 'full';
 
   return (
     <div className="h-full flex flex-col p-6 gap-6">
@@ -91,7 +136,7 @@ const HubRewiring = () => {
                   <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
                   </svg>
-                  Analyze Neighbors
+                  Analyze Hub
                 </>
               )}
             </button>
@@ -152,11 +197,13 @@ const HubRewiring = () => {
             onNodeClick={handleNodeClick}
             width="100%"
             height="100%"
+            networkData={networkData}
+            mode={mode}
           />
         </div>
 
         {/* Stats Panel */}
-        {selectedGene && neighborData && (
+        {selectedGene && mode === 'ego' && (
           <motion.div
             className="w-80 glass-card p-6 flex flex-col gap-4"
             initial={{ opacity: 0, x: 40 }}
@@ -168,7 +215,7 @@ const HubRewiring = () => {
                 {selectedGene}
               </h3>
               <p className="text-xs text-[#A6AEB8] uppercase tracking-wider">
-                Hub Analysis
+                Hub Rewiring Analysis
               </p>
             </div>
 
@@ -184,43 +231,42 @@ const HubRewiring = () => {
 
               <div className="p-4 rounded-xl bg-white/[0.03] border border-white/[0.06]">
                 <div className="text-xs text-[#A6AEB8] uppercase tracking-wider mb-1">
-                  Connectivity Gain
+                  Maintained Edges
                 </div>
-                <div className="font-mono-data text-2xl font-bold text-[#00F0FF]">
-                  +{stats.gain}
+                <div className="font-mono-data text-2xl font-bold text-[#9B59D6]">
+                  {stats.maintained}
                 </div>
-                <div className="text-xs text-[#A6AEB8] mt-1">edges gained in tumor</div>
-              </div>
-
-              <div className="p-4 rounded-xl bg-white/[0.03] border border-white/[0.06]">
-                <div className="text-xs text-[#A6AEB8] uppercase tracking-wider mb-1">
-                  Connectivity Loss
-                </div>
-                <div className="font-mono-data text-2xl font-bold text-[#FF2D8D]">
-                  -{stats.loss}
-                </div>
-                <div className="text-xs text-[#A6AEB8] mt-1">edges lost in tumor</div>
+                <div className="text-xs text-[#A6AEB8] mt-1">stable connections</div>
               </div>
             </div>
 
             <div className="pt-4 border-t border-white/10">
               <h4 className="text-sm font-medium text-[#F2F4F8] uppercase tracking-wider mb-2">
-                Top Neighbors
+                Neighbors
               </h4>
               <div className="space-y-2 max-h-40 overflow-y-auto">
-                {neighborData.nodes
-                  ?.filter(n => n.id !== selectedGene)
-                  ?.slice(0, 5)
+                {networkData?.nodes
+                  ?.filter(n => n.type !== 'hub')
+                  ?.slice(0, 8)
                   .map((node) => (
                     <div
                       key={node.id}
                       className="flex items-center justify-between p-2 rounded-lg bg-white/[0.02] hover:bg-white/[0.05] cursor-pointer transition-colors"
                       onClick={() => {
                         setGeneInput(node.id);
-                        setSelectedGene(node.id);
+                        fetchRewiringForGene(node.id);
                       }}
                     >
-                      <span className="text-sm text-[#F2F4F8] font-mono-data">{node.id}</span>
+                      <div className="flex items-center gap-2">
+                        <div 
+                          className="w-2 h-2 rounded-full"
+                          style={{
+                            backgroundColor: node.status === 'lost' ? '#00F0FF' : 
+                                           node.status === 'gained' ? '#FF2D8D' : '#9B59D6'
+                          }}
+                        />
+                        <span className="text-sm text-[#F2F4F8] font-mono-data">{node.id}</span>
+                      </div>
                       <svg className="w-4 h-4 text-[#A6AEB8]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
                       </svg>

@@ -1,14 +1,15 @@
 import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import {
-  BarChart,
-  Bar,
+  ScatterChart,
+  Scatter,
   XAxis,
   YAxis,
   CartesianGrid,
   Tooltip,
   ResponsiveContainer,
-  Cell
+  Cell,
+  ZAxis
 } from 'recharts';
 
 const VirtualKnockout = () => {
@@ -49,14 +50,14 @@ const VirtualKnockout = () => {
     if (active && payload && payload.length) {
       const data = payload[0].payload;
       return (
-        <div className="glass-card-sm p-4 border border-[#00F0FF]/30">
-          <p className="font-mono-data font-bold text-[#F2F4F8] mb-2">{data.gene}</p>
-          <div className="space-y-1 text-xs">
+        <div className="glass-card-sm p-3 border border-[#00F0FF]/30">
+          <p className="font-mono-data font-bold text-[#F2F4F8] mb-1 text-sm">{data.gene}</p>
+          <div className="space-y-0.5 text-xs">
             <p className="text-[#A6AEB8]">
-              Vitality Score: <span className="text-[#00F0FF] font-bold">{data.vitality_score.toFixed(2)}</span>
+              Vitality: <span className="text-[#00F0FF] font-bold">{data.vitality_score.toFixed(2)}</span>
             </p>
             <p className="text-[#A6AEB8]">
-              ASPL Change: <span className="text-[#FFD166]">{data.aspl_change.toFixed(2)}</span>
+              ASPL: <span className="text-[#FFD166]">{data.aspl_knockout.toFixed(1)}</span>
             </p>
           </div>
         </div>
@@ -65,10 +66,18 @@ const VirtualKnockout = () => {
     return null;
   };
 
-  const topData = knockoutData.slice(0, 15);
+  // Limit data for visualization - show top 50
+  const displayData = knockoutData.slice(0, 50);
+  
+  // Prepare scatter plot data - no scaling needed as ASPL is already in 1700-1800 range
+  const scatterData = displayData.map((item, idx) => ({
+    ...item,
+    rank: idx + 1,
+    size: Math.max(30, 100 - idx * 1.5) // Size decreases with rank
+  }));
 
   return (
-    <div className="h-full flex flex-col p-6 gap-6">
+    <div className="h-full flex flex-col p-6 gap-6 overflow-hidden">
       {/* Header */}
       <div className="flex-none">
         <div className="glass-card p-6">
@@ -78,7 +87,7 @@ const VirtualKnockout = () => {
                 Virtual Knockout Analysis
               </h2>
               <p className="text-sm text-[#A6AEB8]">
-                Identifies hub genes critical for network integrity. Higher vitality scores indicate essential nodes.
+                Hub genes critical for network integrity. Higher vitality = more essential.
               </p>
             </div>
 
@@ -117,105 +126,146 @@ const VirtualKnockout = () => {
           </div>
         </div>
       ) : knockoutData.length > 0 ? (
-        <div className="flex-1 grid grid-cols-1 lg:grid-cols-2 gap-6 min-h-0">
-          {/* Bar Chart */}
+        <div className="flex-1 grid grid-cols-1 lg:grid-cols-2 gap-6 min-h-0 overflow-hidden">
+          {/* Scatter Plot */}
           <motion.div
-            className="glass-card p-6"
+            className="glass-card p-6 flex flex-col overflow-hidden"
             initial={{ opacity: 0, x: -20 }}
             animate={{ opacity: 1, x: 0 }}
             transition={{ duration: 0.4 }}
           >
-            <h3 className="font-display text-lg font-bold text-[#F2F4F8] mb-4">
-              Top 15 Critical Hub Genes
+            <h3 className="font-display text-lg font-bold text-[#F2F4F8] mb-4 flex-none">
+              Vitality vs Network Impact
             </h3>
-            <div className="h-[calc(100%-3rem)]">
+            <div className="flex-1 min-h-0">
               <ResponsiveContainer width="100%" height="100%">
-                <BarChart
-                  data={topData}
-                  layout="vertical"
-                  margin={{ top: 5, right: 30, left: 80, bottom: 5 }}
-                >
+                <ScatterChart margin={{ top: 10, right: 20, bottom: 40, left: 50 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="rgba(255, 255, 255, 0.06)" />
                   <XAxis
+                    dataKey="aspl_knockout"
                     type="number"
-                    tick={{ fill: '#A6AEB8', fontSize: 11, fontFamily: 'JetBrains Mono' }}
+                    name="ASPL After Knockout"
+                    domain={['auto', 'auto']}
+                    tick={{ fill: '#A6AEB8', fontSize: 10, fontFamily: 'JetBrains Mono' }}
                     tickLine={{ stroke: 'rgba(255, 255, 255, 0.1)' }}
                     axisLine={{ stroke: 'rgba(255, 255, 255, 0.1)' }}
+                    label={{ 
+                      value: 'ASPL After Knockout', 
+                      position: 'bottom', 
+                      offset: 20,
+                      fill: '#A6AEB8',
+                      fontSize: 11
+                    }}
                   />
                   <YAxis
-                    type="category"
-                    dataKey="gene"
-                    tick={{ fill: '#A6AEB8', fontSize: 11, fontFamily: 'JetBrains Mono' }}
+                    dataKey="vitality_score"
+                    type="number"
+                    name="Vitality Score"
+                    domain={[0, 'auto']}
+                    tick={{ fill: '#A6AEB8', fontSize: 10, fontFamily: 'JetBrains Mono' }}
                     tickLine={{ stroke: 'rgba(255, 255, 255, 0.1)' }}
                     axisLine={{ stroke: 'rgba(255, 255, 255, 0.1)' }}
+                    label={{ 
+                      value: 'Vitality Score', 
+                      angle: -90, 
+                      position: 'insideLeft',
+                      fill: '#A6AEB8',
+                      fontSize: 11
+                    }}
                   />
-                  <Tooltip content={<CustomTooltip />} cursor={{ fill: 'rgba(0, 240, 255, 0.1)' }} />
-                  <Bar dataKey="vitality_score" radius={[0, 8, 8, 0]}>
-                    {topData.map((entry, index) => (
-                      <Cell key={`cell-${index}`} fill={getBarColor(entry.vitality_score)} />
+                  <ZAxis dataKey="size" range={[30, 150]} />
+                  <Tooltip content={<CustomTooltip />} cursor={{ strokeDasharray: '3 3' }} />
+                  <Scatter data={scatterData} shape="circle">
+                    {scatterData.map((entry, index) => (
+                      <Cell 
+                        key={`cell-${index}`} 
+                        fill={getBarColor(entry.vitality_score)}
+                        fillOpacity={0.7}
+                      />
                     ))}
-                  </Bar>
-                </BarChart>
+                  </Scatter>
+                </ScatterChart>
               </ResponsiveContainer>
+            </div>
+            <div className="flex-none mt-3 flex items-center justify-center gap-4 text-xs">
+              <div className="flex items-center gap-2">
+                <div className="w-3 h-3 rounded-full bg-[#FF2D8D]" />
+                <span className="text-[#A6AEB8]">Critical (&gt;20)</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <div className="w-3 h-3 rounded-full bg-[#FFD166]" />
+                <span className="text-[#A6AEB8]">High (10-20)</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <div className="w-3 h-3 rounded-full bg-[#00F0FF]" />
+                <span className="text-[#A6AEB8]">Moderate (&lt;10)</span>
+              </div>
             </div>
           </motion.div>
 
-          {/* Data Table */}
+          {/* Data Table with Scrolling */}
           <motion.div
-            className="glass-card flex flex-col"
+            className="glass-card flex flex-col overflow-hidden"
             initial={{ opacity: 0, x: 20 }}
             animate={{ opacity: 1, x: 0 }}
             transition={{ duration: 0.4, delay: 0.1 }}
           >
             <div className="flex-none p-6 border-b border-white/10">
-              <h3 className="font-display text-lg font-bold text-[#F2F4F8]">
-                Detailed Rankings
-              </h3>
+              <div className="flex items-center justify-between">
+                <h3 className="font-display text-lg font-bold text-[#F2F4F8]">
+                  Top Critical Genes
+                </h3>
+                <span className="text-xs text-[#A6AEB8]">
+                  Showing {displayData.length} of {knockoutData.length}
+                </span>
+              </div>
             </div>
             <div className="flex-1 overflow-y-auto">
               <table className="w-full">
-                <thead className="sticky top-0 bg-[#0A0A0A] z-10">
-                  <tr className="border-b border-white/10">
-                    <th className="px-6 py-3 text-left text-xs font-medium text-[#A6AEB8] uppercase tracking-wider">
+                <thead className="sticky top-0 bg-[#0A0A0A] z-10 border-b border-white/10">
+                  <tr>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-[#A6AEB8] uppercase tracking-wider">
                       Rank
                     </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-[#A6AEB8] uppercase tracking-wider">
+                    <th className="px-4 py-3 text-left text-xs font-medium text-[#A6AEB8] uppercase tracking-wider">
                       Gene
                     </th>
-                    <th className="px-6 py-3 text-right text-xs font-medium text-[#A6AEB8] uppercase tracking-wider">
-                      Vitality Score
+                    <th className="px-4 py-3 text-right text-xs font-medium text-[#A6AEB8] uppercase tracking-wider">
+                      Vitality
                     </th>
-                    <th className="px-6 py-3 text-right text-xs font-medium text-[#A6AEB8] uppercase tracking-wider">
-                      ASPL Change
+                    <th className="px-4 py-3 text-right text-xs font-medium text-[#A6AEB8] uppercase tracking-wider">
+                      ASPL Δ
                     </th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-white/5">
-                  {knockoutData.map((gene, index) => (
+                  {displayData.map((gene, index) => (
                     <motion.tr
                       key={gene.gene}
                       className="hover:bg-white/[0.03] transition-colors"
-                      initial={{ opacity: 0, y: 20 }}
+                      initial={{ opacity: 0, y: 10 }}
                       animate={{ opacity: 1, y: 0 }}
-                      transition={{ duration: 0.3, delay: index * 0.02 }}
+                      transition={{ duration: 0.2, delay: index * 0.01 }}
                     >
-                      <td className="px-6 py-4 whitespace-nowrap">
+                      <td className="px-4 py-3 whitespace-nowrap">
                         <span
-                          className={`inline-flex items-center justify-center w-8 h-8 rounded-full text-xs font-bold ${
+                          className={`inline-flex items-center justify-center w-7 h-7 rounded-full text-xs font-bold ${
                             index < 3
                               ? 'bg-[#FF2D8D]/20 text-[#FF2D8D] border border-[#FF2D8D]/40'
+                              : index < 10
+                              ? 'bg-[#FFD166]/20 text-[#FFD166] border border-[#FFD166]/40'
                               : 'bg-white/5 text-[#A6AEB8]'
                           }`}
                         >
                           {index + 1}
                         </span>
                       </td>
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        <span className="font-mono-data font-bold text-[#F2F4F8]">
+                      <td className="px-4 py-3 whitespace-nowrap">
+                        <span className="font-mono-data font-bold text-[#F2F4F8] text-sm">
                           {gene.gene}
                         </span>
                       </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-right">
+                      <td className="px-4 py-3 whitespace-nowrap text-right">
                         <span
                           className="font-mono-data text-sm font-bold"
                           style={{ color: getBarColor(gene.vitality_score) }}
@@ -223,7 +273,7 @@ const VirtualKnockout = () => {
                           {gene.vitality_score.toFixed(2)}
                         </span>
                       </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-right">
+                      <td className="px-4 py-3 whitespace-nowrap text-right">
                         <span className="font-mono-data text-sm text-[#A6AEB8]">
                           {gene.aspl_change.toFixed(2)}
                         </span>
